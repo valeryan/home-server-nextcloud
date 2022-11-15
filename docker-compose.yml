@@ -8,14 +8,21 @@ volumes:
       type: none
       device: '${PWD}/${DATA_SOURCE_PATH}'
       o: bind
-
+  nc-config:
+    driver: 'local'
+    driver_opts:
+      type: none
+      device: '${PWD}/${CONFIG_SOURCE_PATH}'
+      o: bind
 services:
   cron:
-    image: nextcloud:fpm-alpine
+    image: nextcloud:fpm
     container_name: nextcloud-cron
     restart: unless-stopped
     volumes:
       - nc-app:/var/www/html
+      - nc-config:/var/www/html/config
+      - nc-data:/var/www/html/data
     entrypoint: /cron.sh
     networks:
       - proxy-net
@@ -25,6 +32,7 @@ services:
     container_name: nextcloud-app
     volumes:
       - nc-app:/var/www/html
+      - nc-config:/var/www/html/config
       - nc-data:/var/www/html/data
     restart: unless-stopped
     environment:
@@ -42,6 +50,7 @@ services:
       - nextcloud-app
     volumes:
       - nc-app:/var/www/html
+      - nc-config:/var/www/html/config
       - nc-data:/var/www/html/data
     restart: unless-stopped
     environment:
