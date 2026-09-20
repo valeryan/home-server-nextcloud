@@ -1,22 +1,61 @@
 volumes:
   nc-app:
+    # The original rootful-Docker volume used unmapped UID 33 under rootless
+    # Podman. Keep it as a rollback volume and use this correctly mapped copy.
+    name: home-server-nextcloud_nc-app-rootless
+  db-volume:
+    driver_opts:
+      type: none
+      o: bind
+      device: "${PWD}/${DB_SOURCE_PATH:-./db}"
   nc-data:
-    driver: 'local'
     driver_opts:
       type: none
-      device: '${PWD}/${DATA_SOURCE_PATH}'
       o: bind
+      device: "${PWD}/${DATA_SOURCE_PATH:-./data}"
   nc-config:
-    driver: 'local'
     driver_opts:
       type: none
-      device: '${PWD}/${CONFIG_SOURCE_PATH}'
       o: bind
+      device: "${PWD}/${CONFIG_SOURCE_PATH:-./config}"
 services:
+  db:
+    image: mysql:8.4.11
+    container_name: db
+    restart: unless-stopped
+    command:
+      - --transaction-isolation=READ-COMMITTED
+      - --binlog-format=ROW
+      - --slow-query-log=ON
+      - --long-query-time=2
+      - --table-open-cache=8000
+      - --innodb-log-file-size=256M
+    ports:
+      - "33061:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: "${MYSQL_ROOT_PASSWORD}"
+      MYSQL_DATABASE: nextcloud
+      MYSQL_USER: oc_samuel
+      MYSQL_PASSWORD: "${MYSQL_PASSWORD}"
+    volumes:
+      - db-volume:/var/lib/mysql
+    networks:
+      - proxy-net
+
+  redis:
+    image: redis:alpine
+    container_name: redis
+    restart: unless-stopped
+    networks:
+      - proxy-net
+
   cron:
-    image: nextcloud:fpm
+    image: nextcloud:35.0.0-fpm
     container_name: nextcloud-cron
     restart: unless-stopped
+    depends_on:
+      - db
+      - redis
     volumes:
       - nc-app:/var/www/html
       - nc-config:/var/www/html/config
@@ -26,15 +65,18 @@ services:
       - proxy-net
 
   nextcloud-app:
-    image: 'nextcloud:fpm'
+    image: "nextcloud:35.0.0-fpm"
     container_name: nextcloud-app
+    depends_on:
+      - db
+      - redis
     volumes:
       - nc-app:/var/www/html
       - nc-config:/var/www/html/config
       - nc-data:/var/www/html/data
     restart: unless-stopped
     environment:
-      - NEXTCLOUD_TRUSTED_DOMAINS=${NEXTCLOUD_HOST}
+      - NEXTCLOUD_TRUSTED_DOMAINS=${PROJECT_HOST}
       - REDIS_HOST=redis
     networks:
       - proxy-net
@@ -49,18 +91,17 @@ services:
     volumes:
       - nc-app:/var/www/html
       - nc-config:/var/www/html/config
-      - nc-data:/var/www/html/data
+      - nc-data:/var/www/html/data:ro
     restart: unless-stopped
     environment:
-      - 'VIRTUAL_HOST=${NEXTCLOUD_HOST}'
-      - 'VIRTUAL_NETWORK=${PROXY_HOST}'
-      - 'VIRTUAL_PORT=80'
-      - 'LETSENCRYPT_HOST=${NEXTCLOUD_HOST}'
-      - 'LETSENCRYPT_EMAIL=${LE_EMAIL}'
+      - "VIRTUAL_HOST=${PROJECT_HOST}"
+      - "VIRTUAL_PORT=80"
+      - "ACME_HOST=${PROJECT_HOST}"
+      - "ACME_EMAIL=${ACME_EMAIL}"
     networks:
       - proxy-net
 
 networks:
   proxy-net:
-    name: home-server_proxy-tier
+    name: proxy-tier
     external: true
